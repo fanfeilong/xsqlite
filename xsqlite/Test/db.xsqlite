@@ -1,27 +1,3 @@
-
-// 标记主键:
-// ==========
-// 在对应的主键后面添加`+p`即可。 
-//
-// 默认查询函数：
-// ===========
-// 默认会生成插入记录的函数。
-// 默认会生成从主键查询整条记录的函数。
-// 默认会生成从主键删除整条记录的函数。
-//
-
-
-// 标记表内简单查询： 
-// ===========
-// 假设有如下表内查询语句：
-// select field1,field2 from table where field3=1? and field4=2?
-// 则可以通过如下方式标记
-// - 在查询语句的key字段field3，field4字段后面添加`+ski`，其中i表示同一个表内查询语句的下标
-// - 在查询语句的value字段field1，field2字段后面添加`+svi`，其中i表示同一个表内查询语句的下标
-// 则会自动生成对应的查询函数.
-//
-// 例如，根据DataBlock的hash查询file_id，在hash字段后面添加`+sk1`，在file_id后面添加`+sv1`
-// 
 table DataBlock
 {
 	bytes:hash+p+sk1;
@@ -32,16 +8,7 @@ table DataBlock
 	i32:range_count;
 }
 
-// 标记表内简单删除:
-// ==========
-// 假设有如下表内删除语句:
-// delete from table where field1=1? and field2=2?
-// 则可以通过如下方式标记
-// - 在field1,field2之后添加`+ri`，，其中i表示同一个表内查询语句的下标
-// 则会自动生成删除函数
-//
-// 例如，根据DataRange的hash和pos删除记录，在hash和pos字段后面添加`ri`
-//
+
 table DataRange
 {
 	bytes:hash+p+r1;
@@ -51,17 +18,7 @@ table DataRange
 	i32:length+sv1;
 }
 
-// 标记表内简单更新:
-// ==========
-// 假设有如下表内更新语句:
-// update table set field1=3? and field4=4? where field1=1? and field2=2? 
-// 则可以通过如下方式标记
-// - 在field1,field2之后添加`+uki`，，其中i表示同一个表内查询语句的下标
-// - 在field3,field4之后添加`+uvi`，，其中i表示同一个表内查询语句的下标
-// 则会自动生成更新函数
-//
-// 例如，根据File的file_id更新last_scan_time，在file_id之后添加`+uk1`,在last_scan_time之后添加`+uv1`
-//
+
 table File
 {
 	i32:file_id+p+uk1;
@@ -72,36 +29,6 @@ table File
 	i32:flag+uv1;
 }
 
-// 其他查询语句：
-// ============
-// 表内查询语句的标记目前只支持上述简易情况，稍微复杂点的，
-// 可以通过sql queryname{"statement"} 的方式添加查询语句,
-// 但是生成器不会自动为其生成函数，需要调用者在外层自己编写。
-//
-// 例如下面的语句，调用者可以自己编写：
-// int DataBaseWrapper::FindEarlestDataBlock(std::string& hash, uint32_t& file_id)
-// {
-//     int ret = SQLITE_OK;
-//     sqlite3_stmt* pStmt = m_db->GetSqliteStatement(SQL_FindEarlestDataBlock);
-//     VERIFY_RET_BY("FindEarlestDataBlock", "get stmt", pStmt != NULL, SQLITE_ERROR);
-//
-//     ret = sqlite3_reset(pStmt);
-//     VERIFY_RET("FindEarlestDataBlock", "sqlite3_reset", ret);
-// 
-//     ret = sqlite3_step(pStmt);
-//     VERIFY_RET("FindEarlestDataBlock", "sqlite3_step", ret);
-//
-//     const char* hash_value = (const char*)(sqlite3_column_text(pStmt, 0));
-//     if (hash_value != NULL) {
-//	     hash.assign(hash_value, strlen(hash_value));
-//     }
-//     file_id = sqlite3_column_int(pStmt, 1);
-//     create_time_out = (int64_t)sqlite3_column_int64(pStmt,4);
-//     return SQLITE_OK;
-// }
-//
-// 后续版本会尽量直接解析sql语句生成对应的函数
-//
 sql SQL_FindEarlestDataBlock
 {
 	"SELECT hash, file_id, min(create_time) FROM DataBlock";
