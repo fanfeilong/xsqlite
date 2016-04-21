@@ -24,19 +24,21 @@ sql queryname
 }
 
 label primary key:
-==========
+------------------
+
 add `+p` in the field's label region 
 
 default generate api：
 ===========
-insert record: InsertXXX
-find all records in table: BeginFindXXX MoveNextXXX EndFindXXX
-find records in table by primary key: BeginFindXXX MoveNextXXX EndFindXXX
-remove records in table by primary key: RemoveXXX
+- insert record: InsertXXX
+- find all records in table: BeginFindXXX MoveNextXXX EndFindXXX
+- find records in table by primary key: BeginFindXXX MoveNextXXX EndFindXXX
+- remove records in table by primary key: RemoveXXX
 
 
 label simple search query in table： 
-===========
+------------------
+
 assume we have the following simple query in table.
 
 "select field3,field4 from table where field1=1? and field2=2?" 
@@ -62,7 +64,8 @@ table DataBlock
 ```
 
 label simple delete query in table
-==========
+------------------
+
 assume we have the following simple query in table.
 
 "delete from table where field1=1? and field2=2?"
@@ -86,7 +89,8 @@ table DataRange
 ```
 
 label simple update query in table:
-==========
+------------------
+
 assume we have the following simple query in table.
 
 "update table set field1=3? and field4=4? where field1=1? and field2=2? " 
@@ -111,7 +115,8 @@ table File
 ```
 
 other query statements：
-============
+------------------
+
 xsqlite DO NOT Support complex query ORM, but you can declare it and then write it by yourself, for example
 we can declare the following query statement by id SQL_FindEarlestDataBlock:
 
