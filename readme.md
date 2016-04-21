@@ -87,8 +87,8 @@ table DataRange
    bytes:hash+p+r1;
    i32:seq+p;
    i32:file_id;
-   i64:pos+sv1+r1;
-   i32:length+sv1;
+   i64:posr1;
+   i32:length;
 }
 ```
 
