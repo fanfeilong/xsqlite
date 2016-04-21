@@ -50,7 +50,7 @@ take the search quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+ski` 
 - leble field3 and field3 with `+svi` 
 
-which will then generate correspoding c++ query functions: `BeginFindXXX`,`MoveNextXXX`,`EndFindXXX`, where XXX is the table name.
+which will then generate correspod c++ query functions: `BeginFindXXX`,`MoveNextXXX`,`EndFindXXX`, where XXX is the table name.
 
 for example:
 ```
@@ -77,7 +77,7 @@ assume we have the following simple query in table.
 take the delete quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+ri`
 
-which will then generate correspoding c++ query functions: `RemoveXXX`, where XXX is the table name.
+which will then generate correspod c++ query functions: `RemoveXXX`, where XXX is the table name.
 
 for example:
 ```
@@ -102,7 +102,7 @@ assume we have the following simple query in table.
 take the update quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+uki`
 - label field3 and field4 with `+uvi`
-which will then generate correspoding c++ query functions: `UpdateXXX`, where XXX is the table name.
+which will then generate correspod c++ query functions: `UpdateXXX`, where XXX is the table name.
 
 for example:
 ```
