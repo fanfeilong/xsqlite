@@ -4,14 +4,14 @@ sqlite c++ orm
 
 Usage:
 ==========
+```
 xsqlite.exe prefix xsqlitefile
-
-Example:
-==========
 xsqlite.exe test ./Test/db.xsqlite
+```
 
 DSL Description:
 =========
+```
 table tablename
 {
    type:field1+label1+label2;
@@ -22,6 +22,7 @@ sql queryname
 {
    "querystatement";
 }
+```
 
 label primary key:
 ------------------
@@ -41,7 +42,9 @@ label simple search query in table：
 
 assume we have the following simple query in table.
 
+```
 "select field3,field4 from table where field1=1? and field2=2?" 
+```
 
 take the search quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+ski` 
@@ -67,8 +70,9 @@ label simple delete query in table
 ------------------
 
 assume we have the following simple query in table.
-
+```
 "delete from table where field1=1? and field2=2?"
+```
 
 take the delete quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+ri`
@@ -92,9 +96,9 @@ label simple update query in table:
 ------------------
 
 assume we have the following simple query in table.
-
+```
 "update table set field1=3? and field4=4? where field1=1? and field2=2? " 
-
+```
 take the update quey an id i(1,2,...), we can label the query by：
 - label field1 and field2 with `+uki`
 - label field3 and field4 with `+uvi`
