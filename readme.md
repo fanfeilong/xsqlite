@@ -127,7 +127,7 @@ we can declare the following query statement by id SQL_FindEarlestDataBlock:
 ```
 sql SQL_FindEarlestDataBlock
 {
-         "SELECT hash, file_id, min(create_time) FROM DataBlock";
+   "SELECT hash, file_id, min(create_time) FROM DataBlock";
 }
 ```
 
@@ -145,7 +145,7 @@ int FindEarlestDataBlock(std::string& hash, uint32_t& file_id,uint64_t& create_t
 {
     int ret = SQLITE_OK;
     sqlite3_stmt* pStmt = pDb->GetSqliteStatement(SQL_FindEarlestDataBlock);
-    VERIFY_RET_BY("FindEarlestDataBlock", "get stmt", pStmt != NULL, XPF_RESULT_FAILED);
+    VERIFY_RET_BY("FindEarlestDataBlock", "get stmt", pStmt != NULL, SQLITE_ERROR);
 
     ret = sqlite3_reset(pStmt);
     VERIFY_RET("FindEarlestDataBlock", "sqlite3_reset", ret);
@@ -160,7 +160,7 @@ int FindEarlestDataBlock(std::string& hash, uint32_t& file_id,uint64_t& create_t
     file_id = sqlite3_column_int(pStmt, 1);
     create_time = (int64_t)sqlite3_column_int64(pStmt,2);
 
-    return XPF_RESULT_SUCCESS;
+    return SQLITE_OK;
 }
 
 ```
