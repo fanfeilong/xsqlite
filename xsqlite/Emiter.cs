@@ -31,6 +31,8 @@ namespace xsqlite {
             transaction_def(sb, className);
 
             sb.Line("public:", true);
+            endfind_def(sb, className);
+            sb.Line();
             foreach (var tableInfo in db.Tables) {
                 var tag=tableInfo.Name;
                 var fields=tableInfo.Fields;
@@ -39,7 +41,7 @@ namespace xsqlite {
                 find_by_primarykey_def(sb, className, tag, fields);
                 beginfind_def(sb, className, tag, fields);
                 movenext_def(sb, className, tag, fields);
-                endfind_def(sb, className, tag, fields);
+                
                 update_def(sb, className, tag, fields);
                
                 sb.Line();
@@ -67,6 +69,7 @@ namespace xsqlite {
             open_impl(sb, className, db);
             close_impl(sb, className, db);
             transaction_impl(sb, className);
+            endfind_impl(sb, className);
             foreach (var tableInfo in db.Tables) {
                 var tag=tableInfo.Name;
                 var fields=tableInfo.Fields;
@@ -75,7 +78,7 @@ namespace xsqlite {
                 find_by_primarykey_impl(sb, className, tag, fields);
                 beginfind_impl(sb, className, tag, fields);
                 movenext_impl(sb, className, tag, fields);
-                endfind_impl(sb, className, tag, fields);
+                
                 update_impl(sb, className, tag, fields);
             }
             query_impl(sb, className, db);
@@ -718,7 +721,7 @@ int $(className)::Close()
 
             var searchKeys=fields.SelectMany(f => f.search_keys).Distinct();
             foreach (var searchLabel in searchKeys) {
-                declare=declare=generate_ltype_declare(fields.Where(field => field.search_keys.Contains(searchLabel)));
+                declare=generate_ltype_declare(fields.Where(field => field.search_keys.Contains(searchLabel)));
                 sb.FormatLine("int {0}::{1}({2}, sqlite3_stmt** ppStmt)", className, tag, declare);
                 sb.Line("{").Push();
 
@@ -795,13 +798,12 @@ int $(className)::Close()
             }
         }
 
-        private static void endfind_def(StringBuilder sb, string className, string tag, List<Field> fields) {
-            sb.FormatLine("int EndFind{0}(sqlite3_stmt * pStmt);", tag);
+        private static void endfind_def(StringBuilder sb, string className) {
+            sb.FormatLine("int End(sqlite3_stmt * pStmt);");
         }
 
-        private static void endfind_impl(StringBuilder sb, string className, string tag, List<Field> fields) {
-            tag="EndFind"+tag;
-            sb.FormatLine("int {0}::{1}(sqlite3_stmt * pStmt)", className, tag);
+        private static void endfind_impl(StringBuilder sb, string className) {
+            sb.FormatLine("int {0}::End(sqlite3_stmt * pStmt)", className);
             sb.Line("{").Push();
             sb.Line("//DO Nothing");
             sb.Line("return XPF_RESULT_SUCCESS;");
@@ -901,11 +903,23 @@ int $(className)::Close()
             var queries = db.FreeQuerys;
             bool hasOne = false;
             foreach (var query in queries){
+                if(!hasOne){
+                    sb.Line("public:", true);
+                }
                 hasOne = true;
                 var ins  = to_fields(db, query.Ins);
                 var outs = to_fields(db, query.Outs);
-                var declare = generate_declare(ins, outs,query.QueryType);
-                sb.FormatLine("int {0}({1})", query.Name, declare);
+                if(query.IsSelect){
+                    var ldeclare = generate_ltype_declare(ins, query.QueryType);
+                    sb.FormatLine("int Begin{0}(sqlite3_stmt **ppStmt, {1});", query.Name, ldeclare);
+
+                    var rdeclare=generate_rtype_declare(outs,query.QueryType);
+                    sb.FormatLine("int MoveNext{0}(sqlite3_stmt* pStmt, {1});", query.Name, rdeclare);
+                    sb.Line();
+                }else{
+                    var declare=generate_declare(ins, outs, query.QueryType);
+                    sb.FormatLine("int {0}({1})", query.Name, declare);    
+                }
             }
             if(hasOne){
                 sb.Line();
@@ -917,32 +931,73 @@ int $(className)::Close()
             foreach (var query in queries){
                 var ins=to_fields(db, query.Ins);
                 var outs=to_fields(db, query.Outs);
-                var declare=generate_declare(ins, outs,query.QueryType);
-                sb.FormatLine("int {0}::{1}({2})", className, query.Name, declare);
-                sb.Line("{").Push();
 
-                sb.Line("int ret=SQLITE_OK;");
-                sb.Line();
+                if(query.IsSelect){
+                    // begin
+                    var ldeclare = generate_ltype_declare(ins, query.QueryType);
+                    sb.FormatLine("int {0}::Begin{1}(sqlite3_stmt **ppStmt, {2})",className, query.Name, ldeclare);
+                    sb.Line("{").Push();
 
-                sb.FormatLine("sqlite3_stmt* pStmt=m_meta->GetSqliteStatement({0});",query.EnumName);
-                sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt!=NULL);", query.Name);
-                sb.Line();
+                    sb.Line("int ret=SQLITE_OK;");
+                    sb.Line();
 
-                sb.Line("ret=sqlite3_reset(pStmt);");
-                sb.FormatLine("VERIFY_RET(\"{0}\", \"sqlite3_reset\", ret);",query.Name);
-                sb.Line();
+                    sb.FormatLine("sqlite3_stmt* pStmt = GetSqliteStatement({0});", query.EnumName);
+                    sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", query.Name);
+                    sb.Line();
+                    sb.Line("ret = sqlite3_reset(pStmt);");
+                    sb.FormatLine("VERIFY_RET(\"{0}\", \"sqlite3_reset\", ret);", query.Name);
+                    sb.Line();
 
-                sb.Line("ret=sqlite3_step(pStmt);");
-                sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret==SQLITE_ROW);",query.Name);
-                sb.Line();
+                    bind(sb, query.Name, ins, query.QueryType);
 
-                bind(sb,query.Name,ins,query.QueryType);
+                    sb.Line("*ppStmt = pStmt;");
 
-                column(sb,query.Name,outs,query.QueryType);
+                    sb.Line();
+                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Pop().Line("}");
 
-                sb.Line();
-                sb.Line("return XPF_RESULT_SUCCESS;");
-                sb.Pop().Line("}");
+                    // movenext
+                    var rdeclare=generate_rtype_declare(outs,query.QueryType);
+                    sb.FormatLine("int {0}::MoveNext{1}(sqlite3_stmt* pStmt, {2});", className,query.Name, rdeclare);
+                    sb.Line("{").Push();
+
+                    sb.Line("int ret = sqlite3_step(pStmt);");
+                    sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_ROW);", query.Name);
+                    sb.Line();
+
+                    column(sb, query.Name, outs, query.QueryType);
+
+                    sb.Line();
+                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Pop().Line("}");
+                }else{
+                    var declare = generate_declare(ins, outs, query.QueryType);
+                    sb.FormatLine("int {0}::{1}({2})", className, query.Name, declare);
+                    sb.Line("{").Push();
+
+                    sb.Line("int ret=SQLITE_OK;");
+                    sb.Line();
+
+                    sb.FormatLine("sqlite3_stmt* pStmt=GetSqliteStatement({0});", query.EnumName);
+                    sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt!=NULL);", query.Name);
+                    sb.Line();
+
+                    sb.Line("ret=sqlite3_reset(pStmt);");
+                    sb.FormatLine("VERIFY_RET(\"{0}\", \"sqlite3_reset\", ret);", query.Name);
+                    sb.Line();
+
+                    sb.Line("ret=sqlite3_step(pStmt);");
+                    sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret==SQLITE_ROW);", query.Name);
+                    sb.Line();
+
+                    bind(sb, query.Name, ins, query.QueryType);
+
+                    column(sb, query.Name, outs, query.QueryType);
+
+                    sb.Line();
+                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Pop().Line("}");
+                }
                 sb.Line();
             }
         }
@@ -1161,12 +1216,12 @@ int $(className)::Close()
             return sb.ToString();
         }
 
-        private static string generate_ltype_declare(IEnumerable<Field> fields) {
+        private static string generate_ltype_declare(IEnumerable<Field> fields,QueryType qt = QueryType.SingleTable) {
             var sb=new StringBuilder();
             int i=0;
             foreach (var field in fields) {
                 var type=cltype(field.type);
-                var variable=clname(field);
+                var variable=clname(field,qt);
                 if (i==0) {
                     sb.AppendFormat("{0} {1}", type, variable);
                 } else {
@@ -1177,12 +1232,12 @@ int $(className)::Close()
             return sb.ToString();
         }
 
-        private static string generate_rtype_declare(IEnumerable<Field> fields) {
+        private static string generate_rtype_declare(IEnumerable<Field> fields, QueryType qt=QueryType.SingleTable) {
             var sb=new StringBuilder();
             int i=0;
             foreach (var field in fields) {
                 var type=crtype(field.type);
-                var variable=crname(field);
+                var variable=crname(field,qt);
                 if (i==0) {
                     sb.AppendFormat("{0} {1}", type, variable);
                 } else {

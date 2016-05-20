@@ -59,6 +59,15 @@ namespace xsqlite {
             get;
             set;
         }
+
+        public bool IsSelect{
+            get{
+                var k = Statement.Substring(1, Statement.IndexOf(' ')-1).ToLower();
+                var s= k == "select";
+                return s;
+            }
+        }
+
         public Query(){
             Ins = new List<FieldInfo>();
             Outs = new List<FieldInfo>();
