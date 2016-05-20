@@ -20,7 +20,9 @@ table tablename
 
 sql queryname
 {
-   "querystatement";
+   in:table1.field1,table2,field2;
+   out:table1.field3,table2.field4,;
+   exp:"querystatement";
 }
 ```
 
@@ -121,46 +123,23 @@ table File
 other query statements：
 ------------------
 
-xsqlite DO NOT Support complex query ORM, but you can declare it and then write it by yourself, for example
-we can declare the following query statement by id SQL_FindEarlestDataBlock:
+otherwise, you can declare sql by the following statements, which is more clear and easy.
 
 ```
-sql SQL_FindEarlestDataBlock
+sql FindEarlestDataBlock
 {
-   "SELECT hash, file_id, min(create_time) FROM DataBlock";
+  in:DataBlock.length;
+  out:DataBlock.hash,DataBlock.file_id,DataBlock.create_time;
+  exp:"SELECT hash, file_id, min(create_time) FROM DataBlock WHERE length<=1?";
 }
 ```
 
-suppose the generated class is db, 
-and then we can write the implement by uplevel class DataBaseWrapper, which will use the genetated api.
+####
 
 ```
-std::string path=...
-db* pDb = new db(path);
-pDb->Open();
-
-...
-
-int FindEarlestDataBlock(std::string& hash, uint32_t& file_id,uint64_t& create_time)
+sql FetchDataBlockStoreInfo
 {
-    int ret = SQLITE_OK;
-    sqlite3_stmt* pStmt = pDb->GetSqliteStatement(SQL_FindEarlestDataBlock);
-    VERIFY_RET_BY("FindEarlestDataBlock", "get stmt", pStmt != NULL, SQLITE_ERROR);
-
-    ret = sqlite3_reset(pStmt);
-    VERIFY_RET("FindEarlestDataBlock", "sqlite3_reset", ret);
-
-    ret = sqlite3_step(pStmt);
-    VERIFY_RET("FindEarlestDataBlock", "sqlite3_step", ret);
-
-    const char* hash_value = (const char*)(sqlite3_column_text(pStmt, 0));
-    if (hash_value != NULL) {
-          hash.assign(hash_value, strlen(hash_value));
-    }
-    file_id = sqlite3_column_int(pStmt, 1);
-    create_time = (int64_t)sqlite3_column_int64(pStmt,2);
-
-    return SQLITE_OK;
+  out:DataBlock.hash,DataBlock.file_id,File.path;
+  exp:"SELECT DataBlock.hash, DataBlock.file_id, File.path FROM DataBlock, File WHERE Datablock.hash=File.hash";
 }
-
 ```
