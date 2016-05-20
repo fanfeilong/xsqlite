@@ -37,5 +37,21 @@ namespace xsqlite {
             get;
             set;
         }
+
+        public Table table{
+            get;
+            set;
+        }
+
+        public string pname{
+            get{
+                return string.Format("{0}_{1}", table.Name.ToLower(), name);
+            }
+        }
+        public string dname {
+            get {
+                return string.Format("{0}.{1}", table.Name, name);
+            }
+        }
     }
 }

@@ -1,3 +1,27 @@
+
+// 标记主键:
+// ==========
+// 在对应的主键后面添加`+p`即可。 
+//
+// 默认查询函数：
+// ===========
+// 默认会生成插入记录的函数。
+// 默认会生成从主键查询整条记录的函数。
+// 默认会生成从主键删除整条记录的函数。
+//
+
+
+// 标记表内简单查询： 
+// ===========
+// 假设有如下表内查询语句：
+// select field1,field2 from table where field3=1? and field4=2?
+// 则可以通过如下方式标记
+// - 在查询语句的key字段field3，field4字段后面添加`+ski`，其中i表示同一个表内查询语句的下标
+// - 在查询语句的value字段field1，field2字段后面添加`+svi`，其中i表示同一个表内查询语句的下标
+// 则会自动生成对应的查询函数.
+//
+// 例如，根据DataBlock的hash查询file_id，在hash字段后面添加`+sk1`，在file_id后面添加`+sv1`
+// 
 table DataBlock
 {
 	bytes:hash+p+sk1;
@@ -8,17 +32,36 @@ table DataBlock
 	i32:range_count;
 }
 
-
+// 标记表内简单删除:
+// ==========
+// 假设有如下表内删除语句:
+// delete from table where field1=1? and field2=2?
+// 则可以通过如下方式标记
+// - 在field1,field2之后添加`+ri`，，其中i表示同一个表内查询语句的下标
+// 则会自动生成删除函数
+//
+// 例如，根据DataRange的hash和pos删除记录，在hash和pos字段后面添加`ri`
+//
 table DataRange
 {
 	bytes:hash+p+r1;
 	i32:seq+p;
 	i32:file_id;
-	i64:pos+r1;
-	i32:length;
+	i64:pos+sv1+r1;
+	i32:length+sv1;
 }
 
-
+// 标记表内简单更新:
+// ==========
+// 假设有如下表内更新语句:
+// update table set field1=3? and field4=4? where field1=1? and field2=2? 
+// 则可以通过如下方式标记
+// - 在field1,field2之后添加`+uki`，，其中i表示同一个表内查询语句的下标
+// - 在field3,field4之后添加`+uvi`，，其中i表示同一个表内查询语句的下标
+// 则会自动生成更新函数
+//
+// 例如，根据File的file_id更新last_scan_time，在file_id之后添加`+uk1`,在last_scan_time之后添加`+uv1`
+//
 table File
 {
 	i32:file_id+p+uk1;
@@ -29,7 +72,19 @@ table File
 	i32:flag+uv1;
 }
 
-sql SQL_FindEarlestDataBlock
+// 其他查询语句：
+// ============
+// 指定查询语句，输出参数，输出参数
+sql FindEarlestDataBlock
 {
-	"SELECT hash, file_id, min(create_time) FROM DataBlock";
+	in:DataBlock.length;
+	out:DataBlock.hash,DataBlock.file_id,DataBlock.create_time;
+	exp:"SELECT hash, file_id, min(create_time) FROM DataBlock WHERE length<=1?";
+}
+
+// 多表查询
+sql FetchDataBlockStoreInfo
+{
+	out:DataBlock.hash,DataBlock.file_id,File.path;
+	exp:"SELECT DataBlock.hash, DataBlock.file_id, File.path FROM DataBlock, File WHERE Datablock.hash=File.hash";
 }

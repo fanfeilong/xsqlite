@@ -35,6 +35,7 @@ namespace xsqlite {
                         table=null;    
                     }
                     if(enterFreeQuery){
+                        query.Update();
                         db.FreeQuerys.Add(query);
                         query = null;
                     }
@@ -66,7 +67,16 @@ namespace xsqlite {
                 Debug.Assert(line.EndsWith(";"));
 
                 if(enterFreeQuery){
-                    query.Statement=line.TrimEnd(new char[] { ';' });    
+                    var l = line.TrimEnd(new char[] { ';' });    
+                    if(line.StartsWith("in:")){
+                        query.Ins.AddRange(l.Substring(3).Split(new char[] { ',' }).ToFieldInfos());
+                    } else if(line.StartsWith("out:")){
+                        query.Outs.AddRange(l.Substring(4).Split(new char[] { ',' }).ToFieldInfos());
+                    } else if(line.StartsWith("exp:")){
+                        query.Statement=line.Substring(4);        
+                    } else{
+                        //Ignore
+                    }
                 }
                 
                 if(enterTable){
@@ -109,7 +119,8 @@ namespace xsqlite {
                         search_values=searchValues,
                         remove_labels=removeLabels,
                         update_keys=updateKeys,
-                        update_values=updateValues
+                        update_values=updateValues,
+                        table = table
                     });
                 }
 
@@ -117,6 +128,18 @@ namespace xsqlite {
 
             return db;
         }
+
+        private static IEnumerable<FieldInfo> ToFieldInfos(this IEnumerable<string> fieldInfos){
+            foreach (var fieldInfo in fieldInfos){
+                var vs = fieldInfo.Split(new char[]{
+                        '.'
+                });
+                yield return new FieldInfo{
+                        TableName = vs[0],
+                        FieldName = vs[1]
+                };
+            }
+        } 
 
         public static Dictionary<string, List<Field>> Parse(this Dictionary<string, string> tables) {
             var tableInfos=new Dictionary<string, List<Field>>();
