@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -40,8 +41,12 @@ namespace xsqlite {
                 movenext_def(sb, className, tag, fields);
                 endfind_def(sb, className, tag, fields);
                 update_def(sb, className, tag, fields);
+               
                 sb.Line();
             }
+
+            query_def(sb,className,db);
+
             member_def(sb, className, db);
             sb.Pop();
 
@@ -73,6 +78,7 @@ namespace xsqlite {
                 endfind_impl(sb, className, tag, fields);
                 update_impl(sb, className, tag, fields);
             }
+            query_impl(sb, className, db);
             impl_tail(sb, className);
 
             return sb.ToString();
@@ -88,12 +94,12 @@ namespace xsqlite {
             sb.FormatLine(@"#ifndef __{0}_{1}_H__", predef.ToUpper(), className.ToUpper());
             sb.FormatLine(@"#define __{0}_{1}_H__", predef.ToUpper(), className.ToUpper());
             sb.Line();
-            sb.Line("#include <stdint.h> // C99");
+            sb.Line("#include <CommonPreHeader.h>");
+            sb.Line("#include <PathUtil.h>");
             sb.Line("#include \"../sqlite/sqlite3.h\"");
             sb.Line();
-            sb.Line("#define RESULT_ALREADY_EXISTS 200");
-            sb.Line("#define VERIFY_RET(s,op,ret) if(ret!=SQLITE_OK){printf(\"%s %s result=%d\",s,op,ret);return SQLITE_ERROR;}");
-            sb.Line("#define VERIFY_RET_BY(s,op,exp,ret) if(!(exp)){printf(\"%s %s result=%d\",s,op,ret);return SQLITE_ERROR;}");
+            sb.Line("#define VERIFY_RET(s,op,ret) if(ret!=SQLITE_OK){XPFLOG_INFO(\"%s %s result=%d\",s,op,ret);return XPF_RESULT_FAILED;}");
+            sb.Line("#define VERIFY_EXP(s,op,exp) if(!(exp)){XPFLOG_INFO(\"%s %s \",s,op);return XPF_RESULT_FAILED;}");
             sb.Line("#define TABLE(table) \"CREATE TABLE IF NOT EXISTS \" table");
             sb.Line();
         }
@@ -204,7 +210,7 @@ namespace xsqlite {
 
             // 添加备用语句
             foreach (var freeQuery in db.FreeQuerys){
-                sb.FormatLine("{0} = {1},",freeQuery.Name, index);
+                sb.FormatLine("{0} = {1},",freeQuery.EnumName, index);
                 index++;     
             }
             
@@ -272,7 +278,7 @@ namespace xsqlite {
 
             // 添加备用语句
             foreach (var freeQuery in db.FreeQuerys){
-                sb.FormatLine("{{{0},{1}}},", freeQuery.Name,freeQuery.Statement);
+                sb.FormatLine("{{{0},{1}}},", freeQuery.EnumName,freeQuery.Statement);
                 index++;    
             }
 
@@ -299,23 +305,23 @@ namespace xsqlite {
 
         private static void member_def(StringBuilder sb, string className, DataBase db) {
             sb.Line("private:", true);
-            sb.Line("std::string m_dbPath;");
+            sb.Line("SpinLock m_lock;");
+            sb.Line("XPFPathStringType m_dbPath;");
             sb.Line("sqlite3 * m_pSqlite;");
             sb.Line("sqlite3_stmt * m_sqls[SQL_QueryStatement_Size];");
             sb.Line("int m_openReferenceCount;");
             sb.Line();
 
             sb.Line("private:", true);
-            sb.FormatLine("{0}(const {0}& that);", className);
-            sb.FormatLine("{0}& operator=(const {0}& that);", className);
+            sb.FormatLine("XPF_DISALLOW_COPY_AND_ASSIGN({0});", className);
         }
 
         private static void constructor_def(StringBuilder sb, string className, DataBase db) {
-            sb.FormatLine("{0}(const std::string& dbPath);", className);
+            sb.FormatLine("{0}(const XPFPathStringType& dbPath);", className);
         }
 
         private static void constructor_impl(StringBuilder sb, string className, DataBase db) {
-            sb.FormatLine("{0}::{0}(const std::string& dbPath)", className);
+            sb.FormatLine("{0}::{0}(const XPFPathStringType& dbPath)", className);
 
             sb.Push();
             sb.Line(": m_openReferenceCount(0)");
@@ -328,6 +334,7 @@ namespace xsqlite {
             sb.Line("for (size_t i = 0; i < sizeof(m_sqls) / sizeof(m_sqls[0]); i++) {");
             sb.Push().Line("m_sqls[i] = NULL;").Pop();
             sb.Line("}");
+            sb.FormatLine("XPFLOG_TRACKOBJ_BEGIN(\"{0}\");", className);
 
             sb.Pop().Line("}");
         }
@@ -340,7 +347,8 @@ namespace xsqlite {
             sb.FormatLine("{0}::~{0}()", className);
 
             sb.Line("{").Push();
-            sb.Line("assert(m_pSqlite==NULL);");
+            sb.Line("XPFLOG_CHECK(m_pSqlite==NULL);");
+            sb.FormatLine("XPFLOG_TRACKOBJ_END(\"{0}\");", className);
             sb.Pop().Line("}");
         }
 
@@ -360,27 +368,27 @@ namespace xsqlite {
 int $(className)::Open()
 {
     int openResult = OpenDatabase();
-    int ret = SQLITE_ERROR;
-    if(openResult==SQLITE_OK)
+    int ret = XPF_RESULT_FAILED;
+    if(openResult==XPF_RESULT_SUCCESS)
     {
-        if(InitTables()==SQLITE_OK)
+        if(InitTables()==XPF_RESULT_SUCCESS)
         {
             ret = PrepareQueryStatements();
         }
         else
         {
-            ret = SQLITE_ERROR;
+            ret = XPF_RESULT_FAILED;
         }
     }
     else
     {
-        if(openResult==RESULT_ALREADY_EXISTS)
+        if(openResult==XPF_RESULT_ALREADY_EXISTS)
         {
-            ret = SQLITE_OK;
+            ret = XPF_RESULT_SUCCESS;
         }
         else
         {
-            ret = SQLITE_ERROR;
+            ret = XPF_RESULT_FAILED;
         }
     }
     return ret;
@@ -390,28 +398,31 @@ int $(className)::OpenDatabase()
 {
     bool exist = false;
     {
+        AutoSpinLock lock(m_lock);
         exist = m_pSqlite!=NULL;
     }
 
     if(!exist)
     {
-        int ret = sqlite3_open(m_dbPath.c_str(), &m_pSqlite);
+        std::string sqlitePath;
+        PathUtil::Path2String(m_dbPath,sqlitePath);
+        int ret = sqlite3_open(sqlitePath.c_str(), &m_pSqlite);
 
         if (ret == SQLITE_OK)
         {
             m_openReferenceCount = 1;
-            return SQLITE_OK;
+            return XPF_RESULT_SUCCESS;
         }
         else
         {
-            printf($(')sqlite3_open File (% s) failed, result = % d)$('), m_dbPath.c_str(), ret);
-            return SQLITE_ERROR;
+            XPFLOG_INFO($(')sqlite3_open File (% s) failed, result = % d)$('), m_dbPath.c_str(), ret);
+            return XPF_RESULT_FAILED;
         }
     }
     else
     {
         m_openReferenceCount++;
-        return RESULT_ALREADY_EXISTS;
+        return XPF_RESULT_ALREADY_EXISTS;
     }
 }
 
@@ -423,12 +434,12 @@ int $(className)::InitTables()
         int ret = sqlite3_exec(m_pSqlite, s.sql.c_str(), NULL, NULL, NULL);
         if(ret!=SQLITE_OK)
         {
-            printf($(')create table (%s) (%s) failed, result = %d$('), m_dbPath.c_str(),s.id, ret);
+            XPFLOG_INFO($(')create table (%s) (%s) failed, result = %d$('), m_dbPath.c_str(),s.id, ret);
             Close();
-            return SQLITE_ERROR;
+            return XPF_RESULT_FAILED;
         }
     }
-    return SQLITE_OK;
+    return XPF_RESULT_SUCCESS;
 }
 
 int $(className)::PrepareQueryStatements()
@@ -439,14 +450,14 @@ int $(className)::PrepareQueryStatements()
         int ret = sqlite3_prepare_v2(m_pSqlite, TaskQueryStatements[i].sql.c_str(), TaskQueryStatements[i].sql.length(), &m_sqls[i], &pszTail);
         if (ret != SQLITE_OK)
         {
-            printf($(')sqlite3_prepare_v2 (%s), result = %d$('), TaskQueryStatements[i].sql.c_str(), ret);
+            XPFLOG_INFO($(')sqlite3_prepare_v2 (%s), result = %d$('), TaskQueryStatements[i].sql.c_str(), ret);
             Close();
-            return SQLITE_ERROR;
+            return XPF_RESULT_FAILED;
         }
     }
-    printf($(')opend database (%s) ok$('), m_dbPath.c_str());
+    XPFLOG_INFO($(')opend database (%s) ok$('), m_dbPath.c_str());
 
-    return SQLITE_OK;
+    return XPF_RESULT_SUCCESS;
 }
     ";
 
@@ -474,11 +485,11 @@ int $(className)::BeginTransaction()
     }
     if (ret == SQLITE_OK)
     {
-        return SQLITE_OK;
+        return XPF_RESULT_SUCCESS;
     } 
     else 
     {
-        return SQLITE_ERROR;
+        return XPF_RESULT_FAILED;
     }
 }
 
@@ -492,11 +503,11 @@ int $(className)::EndTransaction()
     }
     if (ret == SQLITE_OK) 
     {
-        return SQLITE_OK;
+        return XPF_RESULT_SUCCESS;
     } 
     else 
     {
-        return SQLITE_ERROR;
+        return XPF_RESULT_FAILED;
     }
 }
 
@@ -510,11 +521,11 @@ int $(className)::Exec(const std::string& statement)
     }
     if (ret == SQLITE_OK) 
     {
-        return SQLITE_OK;
+        return XPF_RESULT_SUCCESS;
     } 
     else 
     {
-        return SQLITE_ERROR;
+        return XPF_RESULT_FAILED;
     }
 }
 ";
@@ -533,6 +544,7 @@ int $(className)::Close()
 {
     bool exist=false;
     {
+        AutoSpinLock lock(m_lock);
         exist = m_pSqlite!=NULL;
     }
     if (exist)
@@ -560,11 +572,11 @@ int $(className)::Close()
             sqlite3_close(m_pSqlite);
             m_pSqlite = NULL;
         }
-        return SQLITE_OK;
+        return XPF_RESULT_SUCCESS;
     }
     else
     {
-        return SQLITE_OK;
+        return XPF_RESULT_SUCCESS;
     }
 }
 ";
@@ -584,7 +596,7 @@ int $(className)::Close()
             sb.Line("{").Push();
 
             sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}];", tag);
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
             sb.Line();
 
             sb.Line("int ret = sqlite3_reset(pStmt);");
@@ -594,9 +606,9 @@ int $(className)::Close()
             bind(sb, tag, fields);
 
             sb.Line("ret = sqlite3_step(pStmt);");
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_DONE, ret);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
             sb.Line();
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
 
             sb.Pop().Line("}");
             sb.Line();
@@ -621,7 +633,7 @@ int $(className)::Close()
             sb.Line("{").Push();
 
             sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}ByPrimaryKey];", tag);
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
             sb.Line();
 
             sb.Line("int ret = sqlite3_reset(pStmt);");
@@ -632,9 +644,9 @@ int $(className)::Close()
             bind(sb, tag, fields.Where(f => f.primary));
 
             sb.Line("ret = sqlite3_step(pStmt);");
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_DONE, ret);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
             sb.Line();
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
             sb.Pop().Line("}");
             sb.Line();
 
@@ -645,7 +657,7 @@ int $(className)::Close()
                 sb.Line("{").Push();
 
                 sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}_{1}];", tag, removeLabel);
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
                 sb.Line();
 
                 sb.Line("int ret = sqlite3_reset(pStmt);");
@@ -656,9 +668,9 @@ int $(className)::Close()
                 bind(sb, tag, fields.Where(f => f.remove_labels.Contains(removeLabel)));
 
                 sb.Line("ret = sqlite3_step(pStmt);");
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_DONE, ret);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
                 sb.Line();
-                sb.Line("return SQLITE_OK;");
+                sb.Line("return XPF_RESULT_SUCCESS;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
@@ -692,7 +704,7 @@ int $(className)::Close()
             sb.Line("int ret = SQLITE_OK;");
             sb.Line();
             sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}];", searchName);
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
             sb.Line();
             sb.Line("ret = sqlite3_reset(pStmt);");
             sb.FormatLine("VERIFY_RET(\"{0}\", \"sqlite3_reset\", ret);", tag);
@@ -700,7 +712,7 @@ int $(className)::Close()
 
             sb.Line("*ppStmt = pStmt;");
             sb.Line();
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
             sb.Pop().Line("}");
             sb.Line();
 
@@ -718,7 +730,7 @@ int $(className)::Close()
 
                 searchName=get_label_name("Find"+originTag, searchLabel.Replace("k", ""));
                 sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}];", searchName);
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
                 sb.Line();
 
                 sb.Line("ret = sqlite3_reset(pStmt);");
@@ -729,7 +741,7 @@ int $(className)::Close()
 
                 sb.Line("*ppStmt = pStmt;");
                 sb.Line();
-                sb.Line("return SQLITE_OK;");
+                sb.Line("return XPF_RESULT_SUCCESS;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
@@ -754,12 +766,12 @@ int $(className)::Close()
             sb.PushLine("{");
 
             sb.Line("int ret = sqlite3_step(pStmt);");
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_ROW, ret);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_ROW);", tag);
             sb.Line();
 
             column(sb, tag, fields);
 
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
             sb.PopLine("}");
             sb.Line();
 
@@ -772,12 +784,12 @@ int $(className)::Close()
                 sb.PushLine("{");
 
                 sb.Line("int ret = sqlite3_step(pStmt);");
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_ROW, ret);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_ROW);", tag);
                 sb.Line();
 
                 column(sb, tag, valueFields);
 
-                sb.Line("return SQLITE_OK;");
+                sb.Line("return XPF_RESULT_SUCCESS;");
                 sb.PopLine("}");
                 sb.Line();
             }
@@ -792,7 +804,7 @@ int $(className)::Close()
             sb.FormatLine("int {0}::{1}(sqlite3_stmt * pStmt)", className, tag);
             sb.Line("{").Push();
             sb.Line("//DO Nothing");
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
             sb.Pop().Line("}");
             sb.Line();
         }
@@ -813,7 +825,7 @@ int $(className)::Close()
             sb.Line();
 
             sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}ByPrimaryKey];", tag);
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
             sb.Line();
 
             sb.Line("ret = sqlite3_reset(pStmt);");
@@ -823,12 +835,12 @@ int $(className)::Close()
             bind(sb, tag, fields.Where(f => f.primary));
 
             sb.Line("ret = sqlite3_step(pStmt);");
-            sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_ROW, ret);", tag);
+            sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_ROW);", tag);
             sb.Line();
 
             column(sb, tag, fields.Where(f => !f.primary));
 
-            sb.Line("return SQLITE_OK;");
+            sb.Line("return XPF_RESULT_SUCCESS;");
             sb.PopLine("}");
 
             sb.Line();
@@ -856,7 +868,7 @@ int $(className)::Close()
 
                 var updateName=get_label_name(tag, updateKey.Replace("k", ""));
                 sb.FormatLine("sqlite3_stmt* pStmt = m_sqls[SQL_{0}];", updateName);
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"get stmt\", pStmt != NULL, SQLITE_ERROR);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt != NULL);", tag);
                 sb.Line();
 
                 sb.Line("int ret = sqlite3_reset(pStmt);");
@@ -867,26 +879,86 @@ int $(className)::Close()
                 bind(sb, tag, fields.Where(f => f.update_keys.Contains(updateKey)||f.update_values.Contains(updateValue)));
 
                 sb.Line("ret = sqlite3_step(pStmt);");
-                sb.FormatLine("VERIFY_RET_BY(\"{0}\", \"step stmt\", ret == SQLITE_DONE, ret);", tag);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
                 sb.Line();
-                sb.Line("return SQLITE_OK;");
+                sb.Line("return XPF_RESULT_SUCCESS;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
         }
 
-        private static void bind(StringBuilder sb, string tag, IEnumerable<Field> fields) {
-            var index=0;
-            foreach (var field in fields) {
-                index++;
-                bind(sb, tag, field.type, index, clname(field.name));
+        public static IEnumerable<Field> to_fields(DataBase db, List<FieldInfo> fieldInfos) {
+            foreach (var i in fieldInfos) {
+                var table=db.Tables.FirstOrDefault(t => t.Name==i.TableName);
+                Debug.Assert(table!=null);
+                var field=table.Fields.FirstOrDefault(f => f.name==i.FieldName);
+                Debug.Assert(field!=null);
+                yield return field;
+            }
+        } 
+
+        private static void query_def(StringBuilder sb,string className,DataBase db){
+            var queries = db.FreeQuerys;
+            bool hasOne = false;
+            foreach (var query in queries){
+                hasOne = true;
+                var ins  = to_fields(db, query.Ins);
+                var outs = to_fields(db, query.Outs);
+                var declare = generate_declare(ins, outs,query.QueryType);
+                sb.FormatLine("int {0}({1})", query.Name, declare);
+            }
+            if(hasOne){
+                sb.Line();
             }
         }
 
-        private static void column(StringBuilder sb, string tag, IEnumerable<Field> fields) {
+        private static void query_impl(StringBuilder sb, string className, DataBase db) {
+            var queries=db.FreeQuerys;
+            foreach (var query in queries){
+                var ins=to_fields(db, query.Ins);
+                var outs=to_fields(db, query.Outs);
+                var declare=generate_declare(ins, outs,query.QueryType);
+                sb.FormatLine("int {0}::{1}({2})", className, query.Name, declare);
+                sb.Line("{").Push();
+
+                sb.Line("int ret=SQLITE_OK;");
+                sb.Line();
+
+                sb.FormatLine("sqlite3_stmt* pStmt=m_meta->GetSqliteStatement({0});",query.EnumName);
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"get stmt\", pStmt!=NULL);", query.Name);
+                sb.Line();
+
+                sb.Line("ret=sqlite3_reset(pStmt);");
+                sb.FormatLine("VERIFY_RET(\"{0}\", \"sqlite3_reset\", ret);",query.Name);
+                sb.Line();
+
+                sb.Line("ret=sqlite3_step(pStmt);");
+                sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret==SQLITE_ROW);",query.Name);
+                sb.Line();
+
+                bind(sb,query.Name,ins,query.QueryType);
+
+                column(sb,query.Name,outs,query.QueryType);
+
+                sb.Line();
+                sb.Line("return XPF_RESULT_SUCCESS;");
+                sb.Pop().Line("}");
+                sb.Line();
+            }
+        }
+        
+        private static void bind(StringBuilder sb, string tag, IEnumerable<Field> fields,QueryType qt = QueryType.SingleTable) {
             var index=0;
             foreach (var field in fields) {
-                column(sb, tag, field.type, index, crname(field.name));
+                index++;
+                bind(sb, tag, field.type, index, clname(field,qt));
+            }
+        }
+
+        private static void column(StringBuilder sb, string tag, IEnumerable<Field> fields, QueryType qt=QueryType.SingleTable) {
+            var index=0;
+            foreach (var field in fields) {
+                column(sb, tag, field.type, index, crname(field,qt));
                 index++;
             }
         }
@@ -998,12 +1070,60 @@ int $(className)::Close()
             }
         }
 
-        private static string clname(string name) {
-            return name+"_in";
+        private static string clname(Field f,QueryType qtype = QueryType.SingleTable) {
+            switch (qtype){
+                case QueryType.SingleTable:
+                    return f.name+"_in";
+                case QueryType.MultiTable:
+                    return f.pname+"_in";
+                default:
+                    Debug.Assert(false);
+                    return f.name;
+            }
+            
         }
 
-        private static string crname(string name) {
-            return name+"_out";
+        private static string crname(Field f, QueryType qtype=QueryType.SingleTable) {
+            switch (qtype) {
+                case QueryType.SingleTable:
+                    return f.name+"_out";
+                case QueryType.MultiTable:
+                    return f.pname+"_out";
+                default:
+                    Debug.Assert(false);
+                    return f.name;
+            }
+        }
+
+        private static string generate_declare(IEnumerable<Field> lfields, IEnumerable<Field> rfields,QueryType qt) {
+            var sb=new StringBuilder();
+            int i=0;
+            foreach (var field in lfields) {
+                string type="";
+                string variable="";
+                type=cltype(field.type);
+                variable=clname(field,qt);
+                if (i==0) {
+                    sb.AppendFormat("{0} {1}", type, variable);
+                } else {
+                    sb.AppendFormat(", {0} {1}", type, variable);
+                }
+                i++;
+            }
+            foreach (var field in rfields) {
+                string type="";
+                string variable="";
+                type=crtype(field.type);
+                variable=crname(field,qt);
+                if (i==0) {
+                    sb.AppendFormat("{0} {1}", type, variable);
+                } else {
+                    sb.AppendFormat(", {0} {1}", type, variable);
+                }
+                i++;
+            }
+
+            return sb.ToString();
         }
 
         private static string generate_declare(IEnumerable<Field> fields, Func<Field, bool> lfilter, Func<Field, bool> rfilter) {
@@ -1014,7 +1134,7 @@ int $(className)::Close()
                 string variable="";
                 if (lfilter(field)) {
                     type=cltype(field.type);
-                    variable=clname(field.name);
+                    variable=clname(field);
                     if (i==0) {
                         sb.AppendFormat("{0} {1}", type, variable);
                     } else {
@@ -1028,7 +1148,7 @@ int $(className)::Close()
                 string variable="";
                 if (rfilter(field)) {
                     type=crtype(field.type);
-                    variable=crname(field.name);
+                    variable=crname(field);
                     if (i==0) {
                         sb.AppendFormat("{0} {1}", type, variable);
                     } else {
@@ -1046,7 +1166,7 @@ int $(className)::Close()
             int i=0;
             foreach (var field in fields) {
                 var type=cltype(field.type);
-                var variable=clname(field.name);
+                var variable=clname(field);
                 if (i==0) {
                     sb.AppendFormat("{0} {1}", type, variable);
                 } else {
@@ -1062,7 +1182,7 @@ int $(className)::Close()
             int i=0;
             foreach (var field in fields) {
                 var type=crtype(field.type);
-                var variable=crname(field.name);
+                var variable=crname(field);
                 if (i==0) {
                     sb.AppendFormat("{0} {1}", type, variable);
                 } else {
