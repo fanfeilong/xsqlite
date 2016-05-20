@@ -97,12 +97,12 @@ namespace xsqlite {
             sb.FormatLine(@"#ifndef __{0}_{1}_H__", predef.ToUpper(), className.ToUpper());
             sb.FormatLine(@"#define __{0}_{1}_H__", predef.ToUpper(), className.ToUpper());
             sb.Line();
-            sb.Line("#include <CommonPreHeader.h>");
-            sb.Line("#include <PathUtil.h>");
-            sb.Line("#include \"../sqlite/sqlite3.h\"");
+            sb.Line("#include <stdint.h>");
+            sb.Line("#include <sqlite3.h>");
             sb.Line();
-            sb.Line("#define VERIFY_RET(s,op,ret) if(ret!=SQLITE_OK){XPFLOG_INFO(\"%s %s result=%d\",s,op,ret);return XPF_RESULT_FAILED;}");
-            sb.Line("#define VERIFY_EXP(s,op,exp) if(!(exp)){XPFLOG_INFO(\"%s %s \",s,op);return XPF_RESULT_FAILED;}");
+            sb.Line("#define RESULT_ALREADY_EXISTS -1");
+            sb.Line("#define VERIFY_RET(s,op,ret) if(ret!=SQLITE_OK){printf(\"%s %s result=%d\\n\",s,op,ret);return SQLITE_OK;}");
+            sb.Line("#define VERIFY_EXP(s,op,exp) if(!(exp)){printf(\"%s %s \\n\",s,op);return SQLITE_ERROR;}");
             sb.Line("#define TABLE(table) \"CREATE TABLE IF NOT EXISTS \" table");
             sb.Line();
         }
@@ -309,22 +309,23 @@ namespace xsqlite {
         private static void member_def(StringBuilder sb, string className, DataBase db) {
             sb.Line("private:", true);
             sb.Line("SpinLock m_lock;");
-            sb.Line("XPFPathStringType m_dbPath;");
+            sb.Line("std::string m_dbPath;");
             sb.Line("sqlite3 * m_pSqlite;");
             sb.Line("sqlite3_stmt * m_sqls[SQL_QueryStatement_Size];");
             sb.Line("int m_openReferenceCount;");
             sb.Line();
 
             sb.Line("private:", true);
-            sb.FormatLine("XPF_DISALLOW_COPY_AND_ASSIGN({0});", className);
+            sb.FormatLine("{0}(const {0}&);", className);
+            sb.FormatLine("void operator=(const {0}&);", className);
         }
 
         private static void constructor_def(StringBuilder sb, string className, DataBase db) {
-            sb.FormatLine("{0}(const XPFPathStringType& dbPath);", className);
+            sb.FormatLine("{0}(const std::string& dbPath);", className);
         }
 
         private static void constructor_impl(StringBuilder sb, string className, DataBase db) {
-            sb.FormatLine("{0}::{0}(const XPFPathStringType& dbPath)", className);
+            sb.FormatLine("{0}::{0}(const std::string& dbPath)", className);
 
             sb.Push();
             sb.Line(": m_openReferenceCount(0)");
@@ -337,7 +338,6 @@ namespace xsqlite {
             sb.Line("for (size_t i = 0; i < sizeof(m_sqls) / sizeof(m_sqls[0]); i++) {");
             sb.Push().Line("m_sqls[i] = NULL;").Pop();
             sb.Line("}");
-            sb.FormatLine("XPFLOG_TRACKOBJ_BEGIN(\"{0}\");", className);
 
             sb.Pop().Line("}");
         }
@@ -350,8 +350,7 @@ namespace xsqlite {
             sb.FormatLine("{0}::~{0}()", className);
 
             sb.Line("{").Push();
-            sb.Line("XPFLOG_CHECK(m_pSqlite==NULL);");
-            sb.FormatLine("XPFLOG_TRACKOBJ_END(\"{0}\");", className);
+            sb.Line("assert(m_pSqlite==NULL);");
             sb.Pop().Line("}");
         }
 
@@ -371,27 +370,27 @@ namespace xsqlite {
 int $(className)::Open()
 {
     int openResult = OpenDatabase();
-    int ret = XPF_RESULT_FAILED;
-    if(openResult==XPF_RESULT_SUCCESS)
+    int ret = SQLITE_ERROR;
+    if(openResult==SQLITE_OK)
     {
-        if(InitTables()==XPF_RESULT_SUCCESS)
+        if(InitTables()==SQLITE_OK)
         {
             ret = PrepareQueryStatements();
         }
         else
         {
-            ret = XPF_RESULT_FAILED;
+            ret = SQLITE_ERROR;
         }
     }
     else
     {
-        if(openResult==XPF_RESULT_ALREADY_EXISTS)
+        if(openResult==RESULT_ALREADY_EXISTS)
         {
-            ret = XPF_RESULT_SUCCESS;
+            ret = SQLITE_OK;
         }
         else
         {
-            ret = XPF_RESULT_FAILED;
+            ret = SQLITE_ERROR;
         }
     }
     return ret;
@@ -407,25 +406,23 @@ int $(className)::OpenDatabase()
 
     if(!exist)
     {
-        std::string sqlitePath;
-        PathUtil::Path2String(m_dbPath,sqlitePath);
-        int ret = sqlite3_open(sqlitePath.c_str(), &m_pSqlite);
+        int ret = sqlite3_open(m_dbPath.c_str(), &m_pSqlite);
 
         if (ret == SQLITE_OK)
         {
             m_openReferenceCount = 1;
-            return XPF_RESULT_SUCCESS;
+            return SQLITE_OK;
         }
         else
         {
-            XPFLOG_INFO($(')sqlite3_open File (% s) failed, result = % d)$('), m_dbPath.c_str(), ret);
-            return XPF_RESULT_FAILED;
+            printf($(')sqlite3_open File (% s) failed, result = % d)\n$('), m_dbPath.c_str(), ret);
+            return SQLITE_ERROR;
         }
     }
     else
     {
         m_openReferenceCount++;
-        return XPF_RESULT_ALREADY_EXISTS;
+        return RESULT_ALREADY_EXISTS;
     }
 }
 
@@ -437,12 +434,12 @@ int $(className)::InitTables()
         int ret = sqlite3_exec(m_pSqlite, s.sql.c_str(), NULL, NULL, NULL);
         if(ret!=SQLITE_OK)
         {
-            XPFLOG_INFO($(')create table (%s) (%s) failed, result = %d$('), m_dbPath.c_str(),s.id, ret);
+            printf($(')create table (%s) (%s) failed, result = %d\n$('), m_dbPath.c_str(),s.id, ret);
             Close();
-            return XPF_RESULT_FAILED;
+            return SQLITE_ERROR;
         }
     }
-    return XPF_RESULT_SUCCESS;
+    return SQLITE_OK;
 }
 
 int $(className)::PrepareQueryStatements()
@@ -453,14 +450,14 @@ int $(className)::PrepareQueryStatements()
         int ret = sqlite3_prepare_v2(m_pSqlite, TaskQueryStatements[i].sql.c_str(), TaskQueryStatements[i].sql.length(), &m_sqls[i], &pszTail);
         if (ret != SQLITE_OK)
         {
-            XPFLOG_INFO($(')sqlite3_prepare_v2 (%s), result = %d$('), TaskQueryStatements[i].sql.c_str(), ret);
+            printf($(')sqlite3_prepare_v2 (%s), result = %d\n$('), TaskQueryStatements[i].sql.c_str(), ret);
             Close();
-            return XPF_RESULT_FAILED;
+            return SQLITE_ERROR;
         }
     }
-    XPFLOG_INFO($(')opend database (%s) ok$('), m_dbPath.c_str());
+    printf($(')opend database (%s) ok\n$('), m_dbPath.c_str());
 
-    return XPF_RESULT_SUCCESS;
+    return SQLITE_OK;
 }
     ";
 
@@ -488,11 +485,11 @@ int $(className)::BeginTransaction()
     }
     if (ret == SQLITE_OK)
     {
-        return XPF_RESULT_SUCCESS;
+        return SQLITE_OK;
     } 
     else 
     {
-        return XPF_RESULT_FAILED;
+        return SQLITE_ERROR;
     }
 }
 
@@ -506,11 +503,11 @@ int $(className)::EndTransaction()
     }
     if (ret == SQLITE_OK) 
     {
-        return XPF_RESULT_SUCCESS;
+        return SQLITE_OK;
     } 
     else 
     {
-        return XPF_RESULT_FAILED;
+        return SQLITE_ERROR;
     }
 }
 
@@ -524,11 +521,11 @@ int $(className)::Exec(const std::string& statement)
     }
     if (ret == SQLITE_OK) 
     {
-        return XPF_RESULT_SUCCESS;
+        return SQLITE_OK;
     } 
     else 
     {
-        return XPF_RESULT_FAILED;
+        return SQLITE_ERROR;
     }
 }
 ";
@@ -575,11 +572,11 @@ int $(className)::Close()
             sqlite3_close(m_pSqlite);
             m_pSqlite = NULL;
         }
-        return XPF_RESULT_SUCCESS;
+        return SQLITE_OK;
     }
     else
     {
-        return XPF_RESULT_SUCCESS;
+        return SQLITE_OK;
     }
 }
 ";
@@ -611,7 +608,7 @@ int $(className)::Close()
             sb.Line("ret = sqlite3_step(pStmt);");
             sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
             sb.Line();
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
 
             sb.Pop().Line("}");
             sb.Line();
@@ -649,7 +646,7 @@ int $(className)::Close()
             sb.Line("ret = sqlite3_step(pStmt);");
             sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
             sb.Line();
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
             sb.Pop().Line("}");
             sb.Line();
 
@@ -673,7 +670,7 @@ int $(className)::Close()
                 sb.Line("ret = sqlite3_step(pStmt);");
                 sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
                 sb.Line();
-                sb.Line("return XPF_RESULT_SUCCESS;");
+                sb.Line("return SQLITE_OK;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
@@ -715,7 +712,7 @@ int $(className)::Close()
 
             sb.Line("*ppStmt = pStmt;");
             sb.Line();
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
             sb.Pop().Line("}");
             sb.Line();
 
@@ -744,7 +741,7 @@ int $(className)::Close()
 
                 sb.Line("*ppStmt = pStmt;");
                 sb.Line();
-                sb.Line("return XPF_RESULT_SUCCESS;");
+                sb.Line("return SQLITE_OK;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
@@ -774,7 +771,7 @@ int $(className)::Close()
 
             column(sb, tag, fields);
 
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
             sb.PopLine("}");
             sb.Line();
 
@@ -792,7 +789,7 @@ int $(className)::Close()
 
                 column(sb, tag, valueFields);
 
-                sb.Line("return XPF_RESULT_SUCCESS;");
+                sb.Line("return SQLITE_OK;");
                 sb.PopLine("}");
                 sb.Line();
             }
@@ -806,7 +803,7 @@ int $(className)::Close()
             sb.FormatLine("int {0}::End(sqlite3_stmt * pStmt)", className);
             sb.Line("{").Push();
             sb.Line("//DO Nothing");
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
             sb.Pop().Line("}");
             sb.Line();
         }
@@ -842,7 +839,7 @@ int $(className)::Close()
 
             column(sb, tag, fields.Where(f => !f.primary));
 
-            sb.Line("return XPF_RESULT_SUCCESS;");
+            sb.Line("return SQLITE_OK;");
             sb.PopLine("}");
 
             sb.Line();
@@ -883,7 +880,7 @@ int $(className)::Close()
                 sb.Line("ret = sqlite3_step(pStmt);");
                 sb.FormatLine("VERIFY_EXP(\"{0}\", \"step stmt\", ret == SQLITE_DONE);", tag);
                 sb.Line();
-                sb.Line("return XPF_RESULT_SUCCESS;");
+                sb.Line("return SQLITE_OK;");
                 sb.Pop().Line("}");
                 sb.Line();
             }
@@ -953,7 +950,7 @@ int $(className)::Close()
                     sb.Line("*ppStmt = pStmt;");
 
                     sb.Line();
-                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Line("return SQLITE_OK;");
                     sb.Pop().Line("}");
 
                     // movenext
@@ -968,7 +965,7 @@ int $(className)::Close()
                     column(sb, query.Name, outs, query.QueryType);
 
                     sb.Line();
-                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Line("return SQLITE_OK;");
                     sb.Pop().Line("}");
                 }else{
                     var declare = generate_declare(ins, outs, query.QueryType);
@@ -995,7 +992,7 @@ int $(className)::Close()
                     column(sb, query.Name, outs, query.QueryType);
 
                     sb.Line();
-                    sb.Line("return XPF_RESULT_SUCCESS;");
+                    sb.Line("return SQLITE_OK;");
                     sb.Pop().Line("}");
                 }
                 sb.Line();
